@@ -1,72 +1,44 @@
-import { createClient } from "@/lib/supabase/server"
 import { type NextRequest, NextResponse } from "next/server"
+import { createClient } from "@/lib/supabase/server"
+import { revalidatePath } from "next/cache"
 
-export async function POST(request: NextRequest) {
+export const runtime = "nodejs"
+
+function toHttpFromIpfs(u?: string) {
+  if (!u) return u
+  if (u.startsWith("ipfs://")) return u.replace("ipfs://", "https://ipfs.io/ipfs/")
+  return u
+}
+
+export async function POST(req: NextRequest) {
   try {
-    const supabase = await createClient()
+    const { name, symbol, description, mint, devWallet, imageUrl } = await req.json()
 
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser()
-    if (authError || !user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if (!name || !symbol || !mint || !devWallet || !imageUrl) {
+      return NextResponse.json({ error: "missing_fields" }, { status: 400 })
     }
 
-    const { repoData, tokenData, pumpFunData, metadataUri, transactionSignature } = await request.json()
+    const pumpUrl = `https://pump.fun/coin/${mint}`
+    const supabase = createClient()
 
-    // Create or update project in database
-    const { data: project, error: projectError } = await supabase
-      .from("projects")
-      .upsert(
-        {
-          user_id: user.id,
-          github_repo_url: repoData.url,
-          repo_name: repoData.name,
-          repo_description: repoData.description,
-          repo_stars: repoData.stars,
-          repo_forks: repoData.forks,
-          repo_language: repoData.language,
-          repo_verified: true,
-          token_name: tokenData.name,
-          token_symbol: tokenData.symbol,
-          token_description: tokenData.description,
-          token_image_url: tokenData.imageUrl,
-          mint_address: pumpFunData.mint,
-          bonding_curve_address: pumpFunData.bondingCurve,
-          associated_bonding_curve_address: pumpFunData.associatedBondingCurve,
-          creator_address: user.id,
-          pump_fun_url: `https://pump.fun/${pumpFunData.mint}`, // Mock URL
-          updated_at: new Date().toISOString(),
-        },
-        {
-          onConflict: "github_repo_url,user_id",
-        },
-      )
-      .select()
-      .single()
-
-    if (projectError) {
-      console.error("Error creating project:", projectError)
-      return NextResponse.json({ error: "Failed to create project" }, { status: 500 })
-    }
-
-    // Record the transaction
-    const { error: transactionError } = await supabase.from("transactions").insert({
-      project_id: project.id,
-      user_id: user.id,
-      transaction_type: "create",
-      signature: transactionSignature,
-      status: "confirmed",
+    const { error } = await supabase.from("projects").insert({
+      name,
+      symbol,
+      description: description ?? null,
+      mint,
+      dev_wallet: devWallet,
+      image_url: toHttpFromIpfs(imageUrl)!,
+      pump_url: pumpUrl,
     })
 
-    if (transactionError) {
-      console.error("Error recording transaction:", transactionError)
-    }
+    if (error) return NextResponse.json({ error: "db_insert_failed", detail: error.message }, { status: 500 })
 
-    return NextResponse.json({ project, success: true })
-  } catch (error) {
-    console.error("Error creating project:", error)
-    return NextResponse.json({ error: "Failed to create project" }, { status: 500 })
+    try {
+      revalidatePath("/explore")
+    } catch {}
+
+    return NextResponse.json({ ok: true, pumpUrl }, { status: 200 })
+  } catch (e: any) {
+    return NextResponse.json({ error: "server_error", detail: String(e?.message ?? e) }, { status: 500 })
   }
 }
