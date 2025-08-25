@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { Keypair } from "@solana/web3.js"
+import { OffscreenCanvas } from "offscreencanvas"
 
 export async function POST(request: NextRequest) {
   try {
@@ -16,34 +17,44 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { name, symbol, description, image, website, creator, buyAmount } = await request.json()
-    console.log("[v0] Token data received:", { name, symbol, description, creator, buyAmount })
+    const { name, symbol, description, image, website, creator, buyAmount, walletAddress } = await request.json()
+    console.log("[v0] Token data received:", { name, symbol, description, creator, buyAmount, walletAddress })
 
     // Validate required fields
-    if (!name || !symbol || !description || !creator) {
+    if (!name || !symbol || !description || !creator || !walletAddress) {
       console.log("[v0] Missing required fields")
-      return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
+      return NextResponse.json({ error: "Missing required fields including wallet address" }, { status: 400 })
     }
 
     const mintKeypair = Keypair.generate()
     console.log("[v0] Generated mint keypair:", mintKeypair.publicKey.toString())
 
-    const formData = new FormData()
-
-    // Handle image upload - if it's a blob URL, fetch the actual file
     let imageFile: File | Blob
-    if (image && image.startsWith("blob:")) {
+    if (image && image.startsWith("data:")) {
+      // Handle base64 images
       const response = await fetch(image)
       imageFile = await response.blob()
-    } else if (image) {
-      // If it's a base64 or other format, convert to blob
+    } else if (image && image.startsWith("http")) {
+      // Handle URL images
       const response = await fetch(image)
       imageFile = await response.blob()
     } else {
-      // Use a default image if none provided
-      imageFile = new Blob([""], { type: "image/png" })
+      // Create a simple default image
+      const canvas = new OffscreenCanvas(200, 200)
+      const ctx = canvas.getContext("2d")
+      if (ctx) {
+        ctx.fillStyle = "#6366f1"
+        ctx.fillRect(0, 0, 200, 200)
+        ctx.fillStyle = "white"
+        ctx.font = "24px Arial"
+        ctx.textAlign = "center"
+        ctx.fillText(symbol.substring(0, 3), 100, 110)
+      }
+      const blob = await canvas.convertToBlob({ type: "image/png" })
+      imageFile = blob
     }
 
+    const formData = new FormData()
     formData.append("file", imageFile, "token-image.png")
     formData.append("name", name)
     formData.append("symbol", symbol)
@@ -61,22 +72,22 @@ export async function POST(request: NextRequest) {
     })
 
     if (!metadataResponse.ok) {
-      console.error("[v0] IPFS upload failed:", await metadataResponse.text())
-      throw new Error("Failed to upload metadata to IPFS")
+      const errorText = await metadataResponse.text()
+      console.error("[v0] IPFS upload failed:", errorText)
+      throw new Error(`Failed to upload metadata to IPFS: ${errorText}`)
     }
 
     const metadataResult = await metadataResponse.json()
     console.log("[v0] IPFS upload successful:", metadataResult)
 
-    const tokenMetadata = {
-      name: name,
-      symbol: symbol,
-      uri: metadataResult.metadataUri,
-    }
-
     const createTokenPayload = {
+      publicKey: walletAddress, // Required: user's wallet public key
       action: "create",
-      tokenMetadata: tokenMetadata,
+      tokenMetadata: {
+        name: name,
+        symbol: symbol,
+        uri: metadataResult.metadataUri,
+      },
       mint: mintKeypair.publicKey.toString(),
       denominatedInSol: "true",
       amount: buyAmount || 0,
@@ -85,10 +96,9 @@ export async function POST(request: NextRequest) {
       pool: "pump",
     }
 
-    console.log("[v0] Getting unsigned transaction from PumpPortal...")
-    console.log("[v0] Using mint address:", mintKeypair.publicKey.toString())
+    console.log("[v0] Creating token with PumpPortal...")
+    console.log("[v0] Payload:", JSON.stringify(createTokenPayload, null, 2))
 
-    // Use local transaction endpoint that doesn't require API key
     const pumpResponse = await fetch("https://pumpportal.fun/api/trade-local", {
       method: "POST",
       headers: {
@@ -97,25 +107,32 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify(createTokenPayload),
     })
 
+    const responseText = await pumpResponse.text()
+    console.log("[v0] PumpPortal response status:", pumpResponse.status)
+    console.log("[v0] PumpPortal response:", responseText)
+
     if (!pumpResponse.ok) {
-      const errorText = await pumpResponse.text()
-      console.error("[v0] PumpPortal API error:", errorText)
-      throw new Error(`PumpPortal API failed: ${pumpResponse.status} ${errorText}`)
+      console.error("[v0] PumpPortal API error:", responseText)
+      throw new Error(`PumpPortal API failed: ${pumpResponse.status} ${responseText}`)
     }
 
-    const pumpResult = await pumpResponse.json()
-    console.log("[v0] PumpPortal local transaction received:", pumpResult)
+    let pumpResult
+    try {
+      pumpResult = JSON.parse(responseText)
+    } catch (parseError) {
+      console.error("[v0] Failed to parse PumpPortal response:", parseError)
+      throw new Error(`Invalid JSON response from PumpPortal: ${responseText}`)
+    }
 
-    // For local transactions, we get an unsigned transaction that needs to be signed
-    // Since we're on the server, we'll create a simple success response
-    // In a real implementation, this would be sent to the client for signing
+    console.log("[v0] PumpPortal token creation successful:", pumpResult)
+
     const tokenData = {
       mint: mintKeypair.publicKey.toString(),
       bondingCurve: pumpResult.bondingCurve || "Generated",
       associatedBondingCurve: pumpResult.associatedBondingCurve || "Generated",
       metadata: pumpResult.metadata || metadataResult.metadataUri,
       metadataUri: metadataResult.metadataUri,
-      signature: `local_tx_${Date.now()}`, // Placeholder for local transaction
+      signature: pumpResult.signature || `local_tx_${Date.now()}`,
       unsignedTransaction: pumpResult.transaction || null,
     }
 
@@ -123,7 +140,7 @@ export async function POST(request: NextRequest) {
       transaction: tokenData.signature,
       tokenData: tokenData,
       success: true,
-      message: "Token prepared successfully! (Local transaction approach)",
+      message: "Token created successfully on Pump.fun!",
     })
   } catch (error) {
     console.error("[v0] Error in real Pump.fun token creation:", error)

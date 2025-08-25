@@ -4,7 +4,7 @@ import type React from "react"
 
 import { useState, useEffect } from "react"
 import { useWallet } from "@solana/wallet-adapter-react"
-import { Transaction, Connection, LAMPORTS_PER_SOL } from "@solana/web3.js"
+import { Transaction, LAMPORTS_PER_SOL } from "@solana/web3.js"
 import { useToast } from "@/hooks/use-toast"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -30,7 +30,7 @@ interface RepoData {
 }
 
 export function LaunchTokenForm() {
-  const { connected, publicKey, signTransaction, disconnect } = useWallet()
+  const { connected, publicKey, signTransaction, disconnect, wallet } = useWallet()
   const { toast } = useToast()
   const [step, setStep] = useState(1)
   const [selectedRepo, setSelectedRepo] = useState<RepoData | null>(null)
@@ -51,59 +51,27 @@ export function LaunchTokenForm() {
   const [launchResult, setLaunchResult] = useState<any>(null)
 
   const fetchSolBalance = async () => {
-    if (!connected || !publicKey) {
+    if (!connected || !publicKey || !wallet?.adapter) {
       setSolBalance(null)
       return
     }
 
     setLoadingBalance(true)
+    console.log("[v0] Fetching SOL balance from Phantom wallet:", publicKey.toString())
+
     try {
-      console.log("[v0] Fetching SOL balance for wallet:", publicKey.toString())
+      // Use the wallet's connection directly
+      const connection = wallet.adapter.connection || wallet.adapter._connection
 
-      const rpcEndpoints = [
-        "https://api.mainnet-beta.solana.com",
-        "https://solana-api.projectserum.com",
-        "https://rpc.ankr.com/solana",
-        "https://solana-mainnet.g.alchemy.com/v2/demo",
-      ]
-
-      let balance = 0
-      let successfulEndpoint = ""
-
-      for (const endpoint of rpcEndpoints) {
-        try {
-          console.log("[v0] Trying RPC endpoint:", endpoint)
-
-          const connection = new Connection(endpoint, {
-            commitment: "confirmed",
-            confirmTransactionInitialTimeout: 30000,
-          })
-
-          const balanceResult = await Promise.race([
-            connection.getBalance(publicKey),
-            new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Timeout")), 10000)),
-          ])
-
-          balance = balanceResult
-          successfulEndpoint = endpoint
-          console.log("[v0] Successfully fetched balance from:", endpoint)
-          break
-        } catch (endpointError) {
-          console.log("[v0] Failed with endpoint:", endpoint, endpointError)
-          continue
-        }
+      if (!connection) {
+        throw new Error("Wallet connection not available")
       }
 
-      if (!successfulEndpoint) {
-        throw new Error("All RPC endpoints failed")
-      }
+      console.log("[v0] Getting balance from wallet connection...")
+      const balanceInLamports = await connection.getBalance(publicKey)
+      const solBalance = balanceInLamports / LAMPORTS_PER_SOL
 
-      const solBalance = balance / LAMPORTS_PER_SOL
-
-      console.log("[v0] Raw balance (lamports):", balance)
-      console.log("[v0] Converted balance (SOL):", solBalance)
-      console.log("[v0] Successful RPC endpoint:", successfulEndpoint)
-
+      console.log("[v0] Successfully fetched balance from wallet:", solBalance, "SOL")
       setSolBalance(solBalance)
 
       toast({
@@ -111,17 +79,11 @@ export function LaunchTokenForm() {
         description: `Current balance: ${solBalance.toFixed(4)} SOL`,
       })
     } catch (error) {
-      console.error("[v0] Error fetching SOL balance:", error)
-      console.error("[v0] Error details:", {
-        message: error instanceof Error ? error.message : "Unknown error",
-        publicKey: publicKey?.toString(),
-        connected,
-      })
-
+      console.error("[v0] Error fetching SOL balance from wallet:", error)
       setSolBalance(0)
       toast({
         title: "Balance Error",
-        description: "Failed to fetch SOL balance from all RPC endpoints. Please try again.",
+        description: "Failed to fetch SOL balance from wallet. Please refresh manually.",
         variant: "destructive",
       })
     } finally {
