@@ -22,11 +22,33 @@ export async function GET(request: NextRequest) {
         return NextResponse.redirect(`${origin}/auth/login?error=oauth_error`)
       }
 
-      if (data.user) {
+      console.log("[v0] Session data:", {
+        hasUser: !!data.user,
+        hasSession: !!data.session,
+        provider: data.session?.provider,
+        hasProviderToken: !!data.session?.provider_token,
+        providerTokenLength: data.session?.provider_token?.length || 0,
+      })
+
+      if (data.user && data.session) {
         console.log("[v0] User authenticated:", data.user.id)
 
+        if (data.session.provider_token) {
+          console.log("[v0] GitHub provider token available, updating user metadata")
+          const { error: updateError } = await supabase.auth.updateUser({
+            data: {
+              github_access_token: data.session.provider_token,
+            },
+          })
+
+          if (updateError) {
+            console.log("[v0] Failed to store GitHub token in user metadata:", updateError.message)
+          } else {
+            console.log("[v0] GitHub token stored in user metadata")
+          }
+        }
+
         try {
-          // Check if user profile exists
           const { data: existingProfile, error: profileError } = await supabase
             .from("users")
             .select("id")
@@ -34,7 +56,6 @@ export async function GET(request: NextRequest) {
             .single()
 
           if (profileError && profileError.code !== "PGRST116") {
-            // PGRST116 = no rows returned
             console.log("[v0] Profile check error:", profileError.message)
           }
 
@@ -55,7 +76,6 @@ export async function GET(request: NextRequest) {
 
             if (insertError) {
               console.log("[v0] User creation error:", insertError.message)
-              // Continue anyway - user is authenticated even if profile creation fails
             } else {
               console.log("[v0] User profile created successfully")
             }
@@ -64,7 +84,6 @@ export async function GET(request: NextRequest) {
           }
         } catch (dbError) {
           console.log("[v0] Database operation error:", dbError)
-          // Continue anyway - user is authenticated
         }
 
         console.log("[v0] Redirecting to dashboard")

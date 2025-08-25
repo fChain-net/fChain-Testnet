@@ -24,7 +24,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Repository URL is required" }, { status: 400 })
     }
 
-    // Parse GitHub URL to extract owner and repo name
     const urlMatch = repoUrl.match(/github\.com\/([^/]+)\/([^/]+)/)
     if (!urlMatch) {
       console.log("[v0] Invalid GitHub URL format:", repoUrl)
@@ -50,10 +49,15 @@ export async function POST(request: NextRequest) {
       hasProviderToken: !!session?.provider_token,
     })
 
-    const accessToken = session?.provider_token
+    let accessToken = session?.provider_token
+
+    if (!accessToken && user.user_metadata?.github_access_token) {
+      console.log("[v0] Using GitHub token from user metadata")
+      accessToken = user.user_metadata.github_access_token
+    }
 
     if (!accessToken) {
-      console.log("[v0] No GitHub access token found in session")
+      console.log("[v0] No GitHub access token found")
       return NextResponse.json(
         { error: "GitHub access token not found. Please sign out and sign in again with GitHub." },
         { status: 400 },
@@ -101,7 +105,6 @@ export async function POST(request: NextRequest) {
       let project
       if (existingProject) {
         console.log("[v0] Updating existing project:", existingProject.id)
-        // Update existing project
         const { data: updatedProject, error: updateError } = await supabase
           .from("projects")
           .update({
@@ -125,7 +128,6 @@ export async function POST(request: NextRequest) {
         console.log("[v0] Project updated successfully")
       } else {
         console.log("[v0] Creating new project...")
-        // Insert new project
         const { data: newProject, error: insertError } = await supabase
           .from("projects")
           .insert({
