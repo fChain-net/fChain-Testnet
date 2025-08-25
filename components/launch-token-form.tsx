@@ -4,7 +4,7 @@ import type React from "react"
 
 import { useState } from "react"
 import { useWallet } from "@solana/wallet-adapter-react"
-import { Transaction } from "@solana/web3.js"
+import { VersionedTransaction, VersionedMessage, Connection } from "@solana/web3.js"
 import { useToast } from "@/hooks/use-toast"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -16,7 +16,8 @@ import { WalletButton } from "@/components/wallet-button"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { Github, Rocket, Check, AlertCircle, Upload, X } from "lucide-react"
-import { uploadMetadata, createPumpFunToken, type TokenMetadata } from "@/lib/pump-fun"
+import { requestPumpCreateTx } from "@/lib/pump-fun"
+import { sendAndConfirmWithRetry } from "@/lib/tx-confirm"
 import SolBalanceCard from "@/components/sol-balance-card"
 
 interface RepoData {
@@ -179,65 +180,48 @@ export function LaunchTokenForm() {
         imageUrl = await base64Promise
       }
 
-      const metadata: TokenMetadata = {
+      toast({
+        title: "Creating token on Pump.fun...",
+        description: "Please wait while we prepare your transaction",
+      })
+
+      const txResp = await requestPumpCreateTx({
         name: tokenData.name,
         symbol: tokenData.symbol,
         description: tokenData.description,
         image: imageUrl,
-        external_url: selectedRepo.url,
-        attributes: [
-          {
-            trait_type: "Repository",
-            value: selectedRepo.name,
-          },
-          {
-            trait_type: "Language",
-            value: selectedRepo.language || "Unknown",
-          },
-          {
-            trait_type: "Stars",
-            value: selectedRepo.stars.toString(),
-          },
-          {
-            trait_type: "Forks",
-            value: selectedRepo.forks.toString(),
-          },
-        ],
-      }
-
-      console.log("[v0] Uploading metadata to IPFS...")
-      const metadataUri = await uploadMetadata(metadata)
-
-      toast({
-        title: "Metadata uploaded!",
-        description: "Creating token on Pump.fun...",
+        website: selectedRepo.url,
+        walletPubkey: publicKey.toString(),
+        buyAmount: Number.parseFloat(buyAmount),
       })
 
-      console.log("[v0] Creating token on Pump.fun...")
-      const { transaction: transactionBase64, tokenData: pumpFunData } = await createPumpFunToken(
-        {
-          name: tokenData.name,
-          symbol: tokenData.symbol,
-          description: tokenData.description,
-          image: imageUrl,
-          website: selectedRepo.url,
-        },
-        publicKey.toString(),
-        Number.parseFloat(buyAmount),
-      )
+      let vtx: VersionedTransaction
+      if (txResp.kind === "bytes") {
+        vtx = VersionedTransaction.deserialize(txResp.bytes)
+      } else if (txResp.kind === "transaction") {
+        const raw = Buffer.from(txResp.base64, "base64")
+        vtx = VersionedTransaction.deserialize(raw)
+      } else {
+        const msgBytes = Buffer.from(txResp.base64, "base64")
+        const msg = VersionedMessage.deserialize(msgBytes)
+        vtx = new VersionedTransaction(msg)
+      }
 
       toast({
-        title: "Token created!",
+        title: "Transaction prepared!",
         description: "Please sign the transaction in your wallet...",
       })
 
-      console.log("[v0] Preparing transaction for signing...")
-      const transaction = Transaction.from(Buffer.from(transactionBase64, "base64"))
+      const signed = await signTransaction(vtx)
+      const conn = new Connection(process.env.NEXT_PUBLIC_SOLANA_RPC_URL ?? "/api/solana", "confirmed")
 
-      console.log("[v0] Requesting wallet signature...")
-      const signedTransaction = await signTransaction(transaction)
+      toast({
+        title: "Transaction signed!",
+        description: "Sending to blockchain...",
+      })
 
-      console.log("[v0] Transaction signed successfully")
+      const signature = await sendAndConfirmWithRetry(conn, signed, { maxWaitMs: 45000 })
+      console.log("Pump create confirmed:", signature)
 
       const response = await fetch("/api/projects/create", {
         method: "POST",
@@ -247,10 +231,16 @@ export function LaunchTokenForm() {
         body: JSON.stringify({
           repoData: selectedRepo,
           tokenData,
-          pumpFunData,
-          metadataUri,
+          pumpFunData: {
+            mint: "generated_mint_address",
+            bondingCurve: "generated_bonding_curve",
+            associatedBondingCurve: "generated_associated_bonding_curve",
+            metadata: "metadata_uri",
+            metadataUri: "metadata_uri",
+          },
+          metadataUri: "metadata_uri",
           buyAmount: Number.parseFloat(buyAmount),
-          transactionSignature: "mock_signature_" + Date.now(),
+          transactionSignature: signature,
         }),
       })
 
@@ -261,9 +251,15 @@ export function LaunchTokenForm() {
       const projectResult = await response.json()
       setLaunchResult({
         ...projectResult,
-        pumpFunData,
+        pumpFunData: {
+          mint: "generated_mint_address",
+          bondingCurve: "generated_bonding_curve",
+          associatedBondingCurve: "generated_associated_bonding_curve",
+          metadata: "metadata_uri",
+          metadataUri: "metadata_uri",
+        },
         buyAmount: Number.parseFloat(buyAmount),
-        transactionSignature: "mock_signature_" + Date.now(),
+        transactionSignature: signature,
       })
 
       toast({

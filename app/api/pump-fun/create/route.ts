@@ -241,7 +241,7 @@ export async function POST(request: NextRequest) {
       denominatedInSol: "true",
       amount: buyAmount ?? 1,
       slippage: 10,
-      priorityFee: 0.0005,
+      priorityFee: 0.001, // Bumped priority fee from 0.0005 to 0.001 for better confirmation reliability
       pool: "pump",
     }
 
