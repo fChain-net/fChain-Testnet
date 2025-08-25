@@ -49,15 +49,14 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const { name, symbol, description, image, website, creator, buyAmount, walletAddress } = requestData
-    console.log("[v0] Token data received:", { name, symbol, description, creator, buyAmount, walletAddress })
+    const { name, symbol, description, image, website, creator, buyAmount } = requestData
+    console.log("[v0] Token data received:", { name, symbol, description, creator, buyAmount })
 
     const missingFields = []
     if (!name) missingFields.push("name")
     if (!symbol) missingFields.push("symbol")
     if (!description) missingFields.push("description")
     if (!creator) missingFields.push("creator")
-    if (!walletAddress) missingFields.push("walletAddress")
 
     if (missingFields.length > 0) {
       console.log("[v0] Missing required fields:", missingFields)
