@@ -1,6 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
-import { Keypair } from "@solana/web3.js"
 
 export const runtime = "nodejs"
 
@@ -51,14 +50,15 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const { name, symbol, description, image, website, creator, buyAmount } = requestData
-    console.log("[v0] Token data received:", { name, symbol, description, creator, buyAmount })
+    const { name, symbol, description, image, website, creator, mintPubkey, buyAmount } = requestData
+    console.log("[v0] Token data received:", { name, symbol, description, creator, mintPubkey, buyAmount })
 
     const missingFields = []
     if (!name) missingFields.push("name")
     if (!symbol) missingFields.push("symbol")
     if (!description) missingFields.push("description")
     if (!creator) missingFields.push("creator")
+    if (!mintPubkey) missingFields.push("mintPubkey")
 
     if (missingFields.length > 0) {
       console.log("[v0] Missing required fields:", missingFields)
@@ -95,21 +95,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    let mintKeypair
-    try {
-      mintKeypair = Keypair.generate()
-      console.log("[v0] Generated mint keypair:", mintKeypair.publicKey.toString())
-    } catch (keypairError) {
-      console.log("[v0] Failed to generate keypair:", keypairError)
-      return NextResponse.json(
-        {
-          error: "Keypair generation failed",
-          details: "Failed to generate Solana keypair for token mint",
-          errorCode: "KEYPAIR_GENERATION_FAILED",
-        },
-        { status: 500 },
-      )
-    }
+    console.log("[v0] Using provided mint public key:", mintPubkey)
 
     let imageFile: File | Blob
     try {
@@ -237,7 +223,7 @@ export async function POST(request: NextRequest) {
         symbol: symbol,
         uri: metadataResult.metadataUri,
       },
-      mint: mintKeypair.publicKey.toString(),
+      mint: mintPubkey,
       denominatedInSol: "true",
       amount: buyAmount ?? 1,
       slippage: 10,

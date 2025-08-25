@@ -47,6 +47,7 @@ export async function requestPumpCreateTx(input: {
   image: string // URL you already uploaded
   website: string // GitHub repo URL
   walletPubkey: string
+  mintPubkey: string // Added mint public key parameter
   buyAmount: number
 }): Promise<PumpPortalTx> {
   const res = await fetch("/api/pump-fun/create", {
@@ -59,8 +60,8 @@ export async function requestPumpCreateTx(input: {
       image: input.image,
       website: input.website,
       creator: input.walletPubkey,
+      mintPubkey: input.mintPubkey, // Send mint public key to server
       buyAmount: input.buyAmount,
-      // server generates metadataUri & mint; we don't send placeholders
     }),
   })
 

@@ -4,7 +4,7 @@ import type React from "react"
 
 import { useState } from "react"
 import { useWallet } from "@solana/wallet-adapter-react"
-import { VersionedTransaction, VersionedMessage, Connection } from "@solana/web3.js"
+import { VersionedTransaction, VersionedMessage, Connection, Keypair } from "@solana/web3.js"
 import { useToast } from "@/hooks/use-toast"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -49,6 +49,7 @@ export function LaunchTokenForm() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [launchResult, setLaunchResult] = useState<any>(null)
+  const [mintKeypair, setMintKeypair] = useState<Keypair | null>(null)
 
   const handleRepoSelected = (repoData: RepoData) => {
     setSelectedRepo(repoData)
@@ -137,6 +138,13 @@ export function LaunchTokenForm() {
     return Object.keys(errors).length === 0
   }
 
+  const getRequiredSignerPubkeys = (vtx: VersionedTransaction): string[] => {
+    const msg = vtx.message
+    const n = msg.header.numRequiredSignatures
+    const keys = msg.staticAccountKeys
+    return keys.slice(0, n).map((k) => k.toBase58())
+  }
+
   const handleTokenSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
@@ -164,6 +172,10 @@ export function LaunchTokenForm() {
     setError(null)
 
     try {
+      const currentMintKeypair = Keypair.generate()
+      setMintKeypair(currentMintKeypair)
+      console.log("[v0] Generated mint keypair:", currentMintKeypair.publicKey.toString())
+
       toast({
         title: "Starting token launch...",
         description: "Uploading metadata to IPFS",
@@ -192,6 +204,7 @@ export function LaunchTokenForm() {
         image: imageUrl,
         website: selectedRepo.url,
         walletPubkey: publicKey.toString(),
+        mintPubkey: currentMintKeypair.publicKey.toString(),
         buyAmount: Number.parseFloat(buyAmount),
       })
 
@@ -207,6 +220,14 @@ export function LaunchTokenForm() {
         vtx = new VersionedTransaction(msg)
       }
 
+      const requiredSigners = getRequiredSignerPubkeys(vtx)
+      console.log("[v0] Required signers:", requiredSigners)
+
+      if (requiredSigners.includes(currentMintKeypair.publicKey.toBase58())) {
+        console.log("[v0] Mint keypair signature required, partial-signing...")
+        vtx.sign([currentMintKeypair])
+      }
+
       toast({
         title: "Transaction prepared!",
         description: "Please sign the transaction in your wallet...",
@@ -220,54 +241,69 @@ export function LaunchTokenForm() {
         description: "Sending to blockchain...",
       })
 
-      const signature = await sendAndConfirmWithRetry(conn, signed, { maxWaitMs: 45000 })
-      console.log("Pump create confirmed:", signature)
+      try {
+        const signature = await sendAndConfirmWithRetry(conn, signed, { maxWaitMs: 45000 })
+        console.log("[v0] Pump create confirmed:", signature)
 
-      const response = await fetch("/api/projects/create", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          repoData: selectedRepo,
-          tokenData,
+        const response = await fetch("/api/projects/create", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            repoData: selectedRepo,
+            tokenData,
+            pumpFunData: {
+              mint: currentMintKeypair.publicKey.toString(),
+              bondingCurve: "generated_bonding_curve",
+              associatedBondingCurve: "generated_associated_bonding_curve",
+              metadata: "metadata_uri",
+              metadataUri: "metadata_uri",
+            },
+            metadataUri: "metadata_uri",
+            buyAmount: Number.parseFloat(buyAmount),
+            transactionSignature: signature,
+          }),
+        })
+
+        if (!response.ok) {
+          throw new Error("Failed to save project data")
+        }
+
+        const projectResult = await response.json()
+        setLaunchResult({
+          ...projectResult,
           pumpFunData: {
-            mint: "generated_mint_address",
+            mint: currentMintKeypair.publicKey.toString(),
             bondingCurve: "generated_bonding_curve",
             associatedBondingCurve: "generated_associated_bonding_curve",
             metadata: "metadata_uri",
             metadataUri: "metadata_uri",
           },
-          metadataUri: "metadata_uri",
           buyAmount: Number.parseFloat(buyAmount),
           transactionSignature: signature,
-        }),
-      })
+        })
 
-      if (!response.ok) {
-        throw new Error("Failed to save project data")
+        toast({
+          title: "🎉 Token launched successfully!",
+          description: `${tokenData.symbol} is now live on Pump.fun`,
+        })
+
+        setStep(3)
+      } catch (sendError: any) {
+        console.error("[v0] Transaction send error:", sendError)
+
+        if (sendError.name === "SendTransactionError") {
+          try {
+            const logs = await sendError.getLogs(conn)
+            console.error("[v0] On-chain logs:", logs)
+          } catch (logError) {
+            console.error("[v0] Failed to get transaction logs:", logError)
+          }
+        }
+
+        throw sendError
       }
-
-      const projectResult = await response.json()
-      setLaunchResult({
-        ...projectResult,
-        pumpFunData: {
-          mint: "generated_mint_address",
-          bondingCurve: "generated_bonding_curve",
-          associatedBondingCurve: "generated_associated_bonding_curve",
-          metadata: "metadata_uri",
-          metadataUri: "metadata_uri",
-        },
-        buyAmount: Number.parseFloat(buyAmount),
-        transactionSignature: signature,
-      })
-
-      toast({
-        title: "🎉 Token launched successfully!",
-        description: `${tokenData.symbol} is now live on Pump.fun`,
-      })
-
-      setStep(3)
     } catch (error) {
       console.error("[v0] Error launching token:", error)
       const errorMessage = error instanceof Error ? error.message : "Failed to launch token"
