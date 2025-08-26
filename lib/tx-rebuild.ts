@@ -22,13 +22,17 @@ export async function sendWithRebuildOnExpired(
     )
     return sig
   } catch (e: any) {
-    const isBlockhashError =
-      (e instanceof SendTransactionError && /Blockhash not found/i.test(e.message)) ||
-      /Blockhash not found/i.test(String(e?.message ?? e))
+    const msg = String(e?.message ?? "").toLowerCase()
+    const isBlockhashExpired =
+      (e instanceof SendTransactionError && /blockhash not found/i.test(e.message)) ||
+      /blockhash not found/i.test(msg) ||
+      /expired blockheight/i.test(msg) ||
+      /expired block height/i.test(msg) ||
+      /signature .* has expired/i.test(msg) ||
+      /block height exceeded/i.test(msg)
 
-    if (isBlockhashError) {
-      console.log("[v0] Blockhash expired, rebuilding transaction with fresh blockhash...")
-
+    if (isBlockhashExpired) {
+      console.log("[v0] Blockhash/confirmation expiry detected, rebuilding transaction...")
       const tx2 = await buildTx()
       const signed2 = await walletSign(tx2)
       const latest2 = await conn.getLatestBlockhash(commitment)
