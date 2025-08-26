@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
     const pumpUrl = `https://pump.fun/coin/${mint}`
     const supabase = createAdminClient()
 
-    const { error } = await supabase.from("projects").insert({
+    const { error } = await supabase.from("project_launches").insert({
       name,
       symbol,
       description,

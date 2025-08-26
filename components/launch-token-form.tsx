@@ -260,13 +260,15 @@ export function LaunchTokenForm() {
         }),
       })
 
+      let projectResult
       if (!saveResp.ok) {
-        console.warn("[projects/create] failed:", await saveResp.text())
+        const errorText = await saveResp.text()
+        console.warn("[projects/create] failed:", errorText)
+        projectResult = { error: errorText }
       } else {
-        console.log("[projects/create] ok:", await saveResp.json())
+        projectResult = await saveResp.json()
+        console.log("[projects/create] ok:", projectResult)
       }
-
-      const projectResult = await saveResp.json()
 
       setLaunchResult(projectResult)
       setStep(3)

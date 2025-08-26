@@ -13,7 +13,7 @@ export default async function ExplorePage() {
     const supabase = createAdminClient()
 
     const { data, error } = await supabase
-      .from("projects")
+      .from("project_launches")
       .select("*")
       .order("created_at", { ascending: false })
       .limit(50)
