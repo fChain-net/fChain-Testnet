@@ -6,15 +6,29 @@ export const runtime = "nodejs"
 
 function toHttpFromIpfs(u?: string) {
   if (!u) return u
-  if (u.startsWith("ipfs://")) return u.replace("ipfs://", "https://ipfs.io/ipfs/")
-  return u
+  return u.startsWith("ipfs://") ? u.replace("ipfs://", "https://ipfs.io/ipfs/") : u
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const { name, symbol, description, mint, devWallet, imageUrl } = await req.json()
+    const body = await req.json()
 
-    if (!name || !symbol || !mint || !devWallet || !imageUrl) {
+    const name = body.name ?? body.tokenData?.name
+    const symbol = body.symbol ?? body.tokenData?.symbol
+    const description = body.description ?? body.tokenData?.description ?? ""
+    const imageUrlRaw = body.imageUrl ?? body.tokenData?.imageUrl ?? ""
+    const mint = body.mint ?? body.pumpFunData?.mint ?? body.mintPubkey ?? ""
+    const devWallet = body.devWallet ?? body.creator ?? body.wallet ?? ""
+
+    if (!name || !symbol || !mint || !devWallet || !imageUrlRaw) {
+      console.error("[projects/create] missing fields", {
+        name,
+        symbol,
+        mint,
+        devWallet,
+        imageUrlRaw,
+        bodyKeys: Object.keys(body || {}),
+      })
       return NextResponse.json({ error: "missing_fields" }, { status: 400 })
     }
 
@@ -24,14 +38,17 @@ export async function POST(req: NextRequest) {
     const { error } = await supabase.from("projects").insert({
       name,
       symbol,
-      description: description ?? null,
+      description,
       mint,
       dev_wallet: devWallet,
-      image_url: toHttpFromIpfs(imageUrl)!,
+      image_url: toHttpFromIpfs(imageUrlRaw)!,
       pump_url: pumpUrl,
     })
 
-    if (error) return NextResponse.json({ error: "db_insert_failed", detail: error.message }, { status: 500 })
+    if (error) {
+      console.error("[projects/create] db_insert_failed:", error)
+      return NextResponse.json({ error: "db_insert_failed", detail: error.message }, { status: 500 })
+    }
 
     try {
       revalidatePath("/explore")
@@ -39,6 +56,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ ok: true, pumpUrl }, { status: 200 })
   } catch (e: any) {
+    console.error("[projects/create] server_error:", e)
     return NextResponse.json({ error: "server_error", detail: String(e?.message ?? e) }, { status: 500 })
   }
 }

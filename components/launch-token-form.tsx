@@ -245,45 +245,30 @@ export function LaunchTokenForm() {
         description: `${tokenData.symbol} is now live on Pump.fun`,
       })
 
-      const response = await fetch("/api/projects/create", {
+      const devWallet = publicKey?.toBase58() ?? ""
+
+      const saveResp = await fetch("/api/projects/create", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          repoData: selectedRepo,
-          tokenData,
-          pumpFunData: {
-            mint: currentMintKeypair.publicKey.toString(),
-            bondingCurve: "generated_bonding_curve",
-            associatedBondingCurve: "generated_associated_bonding_curve",
-            metadata: "metadata_uri",
-            metadataUri: "metadata_uri",
-          },
-          metadataUri: "metadata_uri",
-          buyAmount: Number.parseFloat(buyAmount),
-          transactionSignature: signature,
+          name: tokenData.name,
+          symbol: tokenData.symbol,
+          description: tokenData.description ?? "",
+          imageUrl, // use the prepared image URL from above
+          mint: currentMintKeypair.publicKey.toString(),
+          devWallet,
         }),
       })
 
-      if (!response.ok) {
-        throw new Error("Failed to save project data")
+      if (!saveResp.ok) {
+        console.warn("[projects/create] failed:", await saveResp.text())
+      } else {
+        console.log("[projects/create] ok:", await saveResp.json())
       }
 
-      const projectResult = await response.json()
-      setLaunchResult({
-        ...projectResult,
-        pumpFunData: {
-          mint: currentMintKeypair.publicKey.toString(),
-          bondingCurve: "generated_bonding_curve",
-          associatedBondingCurve: "generated_associated_bonding_curve",
-          metadata: "metadata_uri",
-          metadataUri: "metadata_uri",
-        },
-        buyAmount: Number.parseFloat(buyAmount),
-        transactionSignature: signature,
-      })
+      const projectResult = await saveResp.json()
 
+      setLaunchResult(projectResult)
       setStep(3)
     } catch (error) {
       console.error("[v0] Error launching token:", error)
@@ -624,7 +609,7 @@ export function LaunchTokenForm() {
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Mint Address:</span>
-                  <span className="font-mono text-xs">{launchResult.pumpFunData?.mint?.slice(0, 8)}...</span>
+                  <span className="font-mono text-xs">{launchResult.mint?.slice(0, 8)}...</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Initial Purchase:</span>
