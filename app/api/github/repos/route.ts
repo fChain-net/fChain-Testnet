@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
     const accessToken = session?.provider_token
 
     if (!accessToken) {
-      return NextResponse.json({ error: "GitHub access token not found" }, { status: 400 })
+      return NextResponse.json({ error: "Txt access token not found" }, { status: 400 })
     }
 
     const repos = await fetchUserRepos(accessToken)
